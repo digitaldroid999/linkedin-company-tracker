@@ -1,0 +1,4 @@
+# Build dependencies for creating the .exe
+# Install with: pip install -r requirements-build.txt
+pyinstaller>=6.0.0
+pillow>=10.0.0

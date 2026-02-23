@@ -28,6 +28,17 @@ Desktop app to track company follows/unfollows for a list of LinkedIn profiles, 
 
    Then check “Email me the scrape summary when finished” in Settings.
 
+## Build (Windows .exe)
+
+To create a standalone executable with the app icon:
+
+```bash
+pip install -r requirements-build.txt
+python build.py
+```
+
+Output: `dist/LinkedIn Company Tracker.exe`. The exe uses `assets/app_icon.svg` for the window and taskbar icon.
+
 ## Run
 
 ```bash

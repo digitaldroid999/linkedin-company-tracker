@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -23,6 +22,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, Qt, QRect, QSize, QTimer
 from PyQt6.QtGui import QFont, QGuiApplication, QPainter, QColor, QPen, QPainterPath, QIcon, QPixmap
 
 from config.constants import SHEETS_LINK, AUTO_SCRAPE_HOUR, AUTO_SCRAPE_MINUTE
+from config.paths import get_base_path
 from services.sheets_service import SheetsService
 from services.scrape_runner import run_scrape
 from services.scheduler import ScrapeScheduler
@@ -33,7 +33,9 @@ from services.linkedin_scraper import LinkedInAPIError
 DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Path to checkmark SVG for checkbox indicator
-_CHECKMARK_SVG = Path(__file__).resolve().parent.parent / "assets" / "checkmark.svg"
+_CHECKMARK_SVG = get_base_path() / "assets" / "checkmark.svg"
+# Path to app icon
+_APP_ICON_SVG = get_base_path() / "assets" / "app_icon.svg"
 
 
 def _draw_checkmark_path(painter: QPainter, rect: QRect, color: QColor, pen_width: float = 1.5) -> None:
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         self.setWindowTitle("LinkedIn Company Tracker")
+        if _APP_ICON_SVG.exists():
+            self.setWindowIcon(QIcon(str(_APP_ICON_SVG)))
         self.setMinimumWidth(520)
         self.setMinimumHeight(380)
         self.resize(760, 420)
@@ -197,6 +201,7 @@ class MainWindow(QMainWindow):
 
         # Row 1: profile count (left), sheets link + copy (right)
         row1 = QHBoxLayout()
+        row1.setSpacing(4)
         self._profile_count_label = QLabel("Profiles in tracking: 0")
         self._profile_count_label.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         row1.addWidget(self._profile_count_label)
