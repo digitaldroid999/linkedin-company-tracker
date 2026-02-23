@@ -481,7 +481,7 @@ class MainWindow(QMainWindow):
         if self._email_check.isChecked():
             ok, msg = send_summary_email(
                 profiles_processed, new_follows, new_unfollows,
-                new_follows_list, new_unfollows_list,sender_email="tejas021012@gmail.com", sender_password="kmg1012$$"
+                new_follows_list, new_unfollows_list, smtp_server="smtp.gmail.com", smtp_port=587, sender_email="tejas021012@gmail.com", sender_password="kxov kpyw fwfp hcke"
             )
             if not ok:
                 QMessageBox.warning(self, "Email", f"Could not send summary email: {msg}")

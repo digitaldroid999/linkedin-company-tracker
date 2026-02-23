@@ -92,7 +92,10 @@ def send_summary_email(
     print(msg.as_string())
     try:
         server = smtplib.SMTP(smtp_server or "smtp.gmail.com", smtp_port or 587)
+        server.ehlo()
+
         server.starttls()
+        server.ehlo()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, SUMMARY_EMAIL, msg.as_string())
         server.quit()
