@@ -89,7 +89,6 @@ def send_summary_email(
     msg["From"] = sender_email
     msg["To"] = SUMMARY_EMAIL
     msg.attach(MIMEText(html, "html"))
-    print(msg.as_string())
     try:
         server = smtplib.SMTP(smtp_server or "smtp.gmail.com", smtp_port or 587)
         server.ehlo()

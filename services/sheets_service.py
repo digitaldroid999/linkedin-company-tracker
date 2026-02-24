@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gspread
+import time
 from google.oauth2.service_account import Credentials
 
 from config.credentials import EMBEDDED_SERVICE_ACCOUNT
@@ -266,7 +267,7 @@ class SheetsService:
     def get_overall_set(self) -> set[tuple[str, str]]:
         """Set of (company_name, normalized_follower_url) for fast membership check."""
         records = self.get_overall_records()
-        return {_row_key_by_url(r["Company Name"], r.get("Follower URL", "")) for r in records}
+        return records, {_row_key_by_url(r["Company Name"], r.get("Follower URL", "")) for r in records}
 
     def append_overall(
         self,
@@ -277,13 +278,45 @@ class SheetsService:
         initial_scrape_date: str,
         date_followed: str,
     ) -> None:
-        ws = self._sheet(SHEET_OVERALL)
-        company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
-        follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
-        ws.append_row(
-            [company_cell, follower_cell, initial_scrape_date, date_followed],
-            value_input_option="USER_ENTERED",
+        """Append a single overall record (legacy helper). Prefer append_overall_batch when adding many rows."""
+        self.append_overall_batch(
+            [
+                (
+                    company_name,
+                    company_url,
+                    follower_name,
+                    follower_url,
+                    initial_scrape_date,
+                    date_followed,
+                )
+            ]
         )
+
+    def append_overall_batch(
+        self,
+        records: list[tuple[str, str, str, str, str, str]],
+    ) -> None:
+        """Append multiple overall records in a single Sheets API call.
+
+        Each record is (company_name, company_url, follower_name, follower_url, initial_scrape_date, date_followed).
+        """
+        if not records:
+            return
+        ws = self._sheet(SHEET_OVERALL)
+        values: list[list[str]] = []
+        for (
+            company_name,
+            company_url,
+            follower_name,
+            follower_url,
+            initial_scrape_date,
+            date_followed,
+        ) in records:
+            company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
+            follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
+            values.append([company_cell, follower_cell, initial_scrape_date, date_followed])
+        # Use append_rows to minimize per-row API calls.
+        ws.append_rows(values, value_input_option="USER_ENTERED")
 
     def remove_from_overall_by_row_index(self, one_based_row: int) -> None:
         """Remove a single row from Overall sheet (1-based row number)."""
@@ -310,13 +343,28 @@ class SheetsService:
         follower_url: str,
         date_followed: str,
     ) -> None:
-        ws = self._sheet(SHEET_NEW_FOLLOWS)
-        company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
-        follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
-        ws.append_row(
-            [company_cell, follower_cell, date_followed],
-            value_input_option="USER_ENTERED",
+        """Append a single new-follow record (legacy helper). Prefer append_new_follows_batch when adding many rows."""
+        self.append_new_follows_batch(
+            [(company_name, company_url, follower_name, follower_url, date_followed)]
         )
+
+    def append_new_follows_batch(
+        self,
+        records: list[tuple[str, str, str, str, str]],
+    ) -> None:
+        """Append multiple new-follow records in a single Sheets API call.
+
+        Each record is (company_name, company_url, follower_name, follower_url, date_followed).
+        """
+        if not records:
+            return
+        ws = self._sheet(SHEET_NEW_FOLLOWS)
+        values: list[list[str]] = []
+        for company_name, company_url, follower_name, follower_url, date_followed in records:
+            company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
+            follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
+            values.append([company_cell, follower_cell, date_followed])
+        ws.append_rows(values, value_input_option="USER_ENTERED")
 
     # ---------- New Unfollows ----------
     def append_new_unfollow(
@@ -329,10 +377,43 @@ class SheetsService:
         date_followed: str,
         unfollowed_date: str,
     ) -> None:
-        ws = self._sheet(SHEET_NEW_UNFOLLOWS)
-        company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
-        follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
-        ws.append_row(
-            [company_cell, follower_cell, initial_scrape_date, date_followed, unfollowed_date],
-            value_input_option="USER_ENTERED",
+        """Append a single new-unfollow record (legacy helper). Prefer append_new_unfollows_batch when adding many rows."""
+        self.append_new_unfollows_batch(
+            [
+                (
+                    company_name,
+                    company_url,
+                    follower_name,
+                    follower_url,
+                    initial_scrape_date,
+                    date_followed,
+                    unfollowed_date,
+                )
+            ]
         )
+
+    def append_new_unfollows_batch(
+        self,
+        records: list[tuple[str, str, str, str, str, str, str]],
+    ) -> None:
+        """Append multiple new-unfollow records in a single Sheets API call.
+
+        Each record is (company_name, company_url, follower_name, follower_url, initial_scrape_date, date_followed, unfollowed_date).
+        """
+        if not records:
+            return
+        ws = self._sheet(SHEET_NEW_UNFOLLOWS)
+        values: list[list[str]] = []
+        for (
+            company_name,
+            company_url,
+            follower_name,
+            follower_url,
+            initial_scrape_date,
+            date_followed,
+            unfollowed_date,
+        ) in records:
+            company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
+            follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
+            values.append([company_cell, follower_cell, initial_scrape_date, date_followed, unfollowed_date])
+        ws.append_rows(values, value_input_option="USER_ENTERED")

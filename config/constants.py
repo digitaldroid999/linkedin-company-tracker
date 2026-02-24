@@ -18,8 +18,7 @@ INITIALLY_SCRAPED_NO = "No"
 
 AUTO_SCRAPE_HOUR = 9
 AUTO_SCRAPE_MINUTE = 0
-SUMMARY_EMAIL = "tejas021012@gmail.com"
-
+SUMMARY_EMAIL = "mattcmcknight@gmail.com"
 # LinkedIn URL patterns
 LINKEDIN_PROFILE_BASE = "https://www.linkedin.com/in/"
 LINKEDIN_COMPANY_BASE = "https://www.linkedin.com/company/"

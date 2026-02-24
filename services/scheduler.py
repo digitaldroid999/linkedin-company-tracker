@@ -47,6 +47,11 @@ class ScrapeScheduler:
         """day_names e.g. ['Mon', 'Wed']."""
         self._selected_days = {WEEKDAY_MAP[d] for d in day_names if d in WEEKDAY_MAP}
 
+    def set_time(self, hour: int, minute: int) -> None:
+        """Set the run time (local). hour 0–23, minute 0–59."""
+        self._hour = max(0, min(23, hour))
+        self._minute = max(0, min(59, minute))
+
     def start(self) -> None:
         if not self._selected_days:
             return
