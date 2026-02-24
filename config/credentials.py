@@ -3,7 +3,7 @@
 import os
 
 # RapidAPI professional-network-data (company interests)
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "fff75d5b68mshd98c90a8a1e92bap14dd28jsnf050002045e2")
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "c2af2cf2b4msh0d63d110f403afbp1233e9jsn8dfa08e0eb1d")
 RAPIDAPI_HOST = "professional-network-data.p.rapidapi.com"
 
 EMBEDDED_SERVICE_ACCOUNT = {

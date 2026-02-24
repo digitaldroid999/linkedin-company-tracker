@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from config.constants import LINKEDIN_PROFILE_BASE
@@ -23,6 +23,32 @@ def _format_date(d: datetime | None) -> str:
     if d is None:
         d = datetime.now()
     return d.strftime("%Y-%m-%d")
+
+
+def excel_serial_to_date(serial_number):
+    """
+    Convert Excel serial number to date string in YYYY-MM-DD format
+    
+    Args:
+        serial_number: Excel serial date (e.g., 46077)
+    
+    Returns:
+        String in YYYY-MM-DD format (e.g., "2026-02-24")
+    """
+    # Excel's epoch is 1899-12-30 (day 1)
+    excel_epoch = datetime(1899, 12, 30)
+    
+    # Handle if serial_number is string or other type
+    try:
+        serial_number = float(serial_number)
+    except (ValueError, TypeError):
+        return str(serial_number)
+    
+    # Convert serial to date
+    converted_date = excel_epoch + timedelta(days=serial_number)
+    
+    # Return in YYYY-MM-DD format
+    return converted_date.strftime("%Y-%m-%d")
 
 
 def run_scrape(
@@ -105,7 +131,7 @@ def run_scrape(
                         display_name,
                         rec.get("Follower URL", ""),
                         rec.get("Initial Scrape Date", ""),
-                        rec.get("Date Followed", ""),
+                        excel_serial_to_date(rec.get("Date Followed", "")),
                         today,
                     )
                     new_unfollows_list.append({
@@ -113,7 +139,7 @@ def run_scrape(
                         "Unfollowed Date": today,
                     })
                     if row_index is not None:
-                        rows_to_remove.append(row_index+2)
+                        rows_to_remove.append(row_index + 2)
 
             # Remove unfollowed rows from overall (from bottom to top to preserve indices)
             for row_index in sorted(rows_to_remove, reverse=True):
