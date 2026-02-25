@@ -52,14 +52,14 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
         try:
             response = requests.post(URL, json=payload, headers=HEADERS, timeout=30)
             if response.status_code == 429:
-                for attempt in range(6):
+                for attempt in range(12):
                     time.sleep(10)
                     response = requests.post(URL, json=payload, headers=HEADERS, timeout=30)
                     if response.status_code != 429:
                         break
                 if response.status_code == 429:
                     raise LinkedInAPIError(
-                        "Rate limit exceeded (429) after 6 retries. " + API_ERROR_MESSAGE
+                        "Rate limit exceeded (429) after 12 retries. " + API_ERROR_MESSAGE
                     )
             response.raise_for_status()
             data = response.json()
@@ -73,12 +73,11 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
             if page == 1:
                 raise LinkedInAPIError(API_ERROR_MESSAGE) from e
             break
-
+        
         if not data.get("success"):
             if page == 1:
                 return []
             break
-
 
         body = data.get("data") or {}
         items = body.get("items") or []

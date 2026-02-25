@@ -68,7 +68,7 @@ def get_profile_name(profile_url_or_slug: str) -> str | None:
     url = _normalize_profile_url(profile_url_or_slug)
     if not url or "/in/" not in url:
         return None
-    max_retries = 6
+    max_retries = 12
     for attempt in range(max_retries):
         try:
             response = requests.get(

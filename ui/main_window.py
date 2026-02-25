@@ -212,6 +212,10 @@ class ScrapeWorker(QThread):
     finished_with_result = pyqtSignal(int, int, int, list, list)
     api_error = pyqtSignal(str)
 
+    def __init__(self, should_stop: Callable[[], bool] | None = None):
+        super().__init__()
+        self._should_stop = should_stop
+
     def run(self):
         try:
             def on_status(msg):
@@ -220,7 +224,7 @@ class ScrapeWorker(QThread):
             def on_progress(profile, n_follows, n_unfollows):
                 self.progress.emit(profile, n_follows, n_unfollows)
 
-            result = run_scrape(on_status=on_status, on_progress=on_progress)
+            result = run_scrape(on_status=on_status, on_progress=on_progress, should_stop=self._should_stop)
             self.finished_with_result.emit(*result)
         except LinkedInAPIError as e:
             self.finished_with_result.emit(0, 0, 0, [], [])
@@ -237,6 +241,7 @@ class MainWindow(QMainWindow):
         self._running = False
         self._importing = False
         self._manage_busy = False
+        self._stop_requested = False
         self._worker: ScrapeWorker | None = None
         self._import_worker: ImportCSVWorker | None = None
         self._sheets = SheetsService()
@@ -377,7 +382,7 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self._email_check)
         layout.addWidget(settings_group)
 
-        # Row 4: Run button
+        # Row 4: Run / Stop controls
         run_layout = QHBoxLayout()
         run_layout.addStretch()
         self._run_btn = QPushButton("Run")
@@ -386,6 +391,17 @@ class MainWindow(QMainWindow):
         self._run_btn.setStyleSheet(_btn_style)
         self._run_btn.clicked.connect(self._start_run)
         run_layout.addWidget(self._run_btn)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setMinimumWidth(120)
+        self._stop_btn.setMinimumHeight(36)
+        self._stop_btn.setStyleSheet(
+            "QPushButton { background-color: #e53935; color: white; border-radius: 6px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #b71c1c; }"
+            "QPushButton:disabled { background-color: #f8bdbb; color: #666; }"
+        )
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.clicked.connect(self._on_stop_clicked)
+        run_layout.addWidget(self._stop_btn)
         run_layout.addStretch()
         layout.addLayout(run_layout)
 
@@ -710,9 +726,19 @@ class MainWindow(QMainWindow):
             cb.setEnabled(not busy)
         self._auto_run_time.setEnabled(not busy)
         self._email_check.setEnabled(not busy)
+        # Stop/Resume button: enabled when not importing/managing, always available to stop or resume scraping
+        if self._running:
+            self._stop_btn.setEnabled(True)
+        else:
+            self._stop_btn.setEnabled(not self._importing and not self._manage_busy)
 
     def _set_running(self, running: bool):
         self._running = running
+        if running:
+            self._stop_requested = False
+            self._stop_btn.setText("Stop")
+        else:
+            self._stop_btn.setText("Resume")
         self._update_controls_enabled()
 
     def _start_run(self):
@@ -720,12 +746,24 @@ class MainWindow(QMainWindow):
             return
         self._set_running(True)
         self._status_bar.showMessage("Scraping…")
-        self._worker = ScrapeWorker()
+        self._worker = ScrapeWorker(should_stop=self._should_stop)
         self._worker.status.connect(self._on_worker_status)
         self._worker.progress.connect(self._on_worker_progress)
         self._worker.finished_with_result.connect(self._on_worker_finished)
         self._worker.api_error.connect(self._on_api_error)
         self._worker.start()
+
+    def _should_stop(self) -> bool:
+        return self._stop_requested
+
+    def _on_stop_clicked(self):
+        if self._running:
+            # Request graceful stop after current profile finishes
+            self._stop_requested = True
+            self._status_bar.showMessage("Stopping after current profile…")
+        else:
+            # Resume scraping (start a new run)
+            self._start_run()
 
     def _on_worker_status(self, msg: str):
         self._status_bar.showMessage(f"Scraping {msg}")

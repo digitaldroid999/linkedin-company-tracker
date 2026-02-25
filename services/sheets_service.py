@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gspread
 import time
+from typing import Callable
 from google.oauth2.service_account import Credentials
 
 from config.credentials import EMBEDDED_SERVICE_ACCOUNT
@@ -101,13 +102,76 @@ class SheetsService:
         self._spreadsheet = self._gc.open_by_key(GOOGLE_SHEET_ID)
 
     def _sheet(self, name: str):
+        """Return worksheet by name."""
         return self._spreadsheet.worksheet(name)
+
+    def _batch_update_with_retry(
+        self,
+        requests: list[dict],
+        *,
+        max_retries: int = 12,
+        delay_seconds: float = 10,
+    ) -> None:
+        """Run spreadsheet.batch_update with simple retry logic.
+
+        Swallows errors after retries are exhausted to avoid crashing the app;
+        in that case, some rows may remain undeleted.
+        """
+        if not requests:
+            return
+        for _ in range(max_retries):
+            try:
+                self._spreadsheet.batch_update({"requests": requests})
+                return
+            except Exception:
+                time.sleep(delay_seconds)
+
+    def _run_ws_write_with_retry(
+        self,
+        operation: Callable[[], None],
+        *,
+        max_retries: int = 12,
+        delay_seconds: float = 10.0,
+    ) -> None:
+        """Run a worksheet write operation (append_row, append_rows, update_cell, etc.) with retry."""
+        for _ in range(max_retries):
+            try:
+                operation()
+                return
+            except Exception:
+                time.sleep(delay_seconds)
+        # After exhausting retries, raise so caller can handle or we fail visibly
+        raise RuntimeError("Worksheet write failed after retries")
+
+    def _get_all_values_from_sheet(
+        self,
+        sheet_name: str,
+        value_render_option: str | None = None,
+        max_retries: int = 12,
+        delay_seconds: float = 10,
+    ) -> tuple[object, list[list[str]]]:
+        """Get worksheet and all values with retry. Retries both self._sheet() and get_all_values().
+
+        Returns (worksheet_or_none, rows). On success rows is non-empty; on failure (None, []).
+        """
+        for _ in range(max_retries):
+            try:
+                ws = self._sheet(sheet_name)
+                if value_render_option is None:
+                    rows = ws.get_all_values()
+                else:
+                    rows = ws.get_all_values(value_render_option=value_render_option)
+                if rows:
+                    return (ws, rows)
+            except Exception:
+                pass
+            time.sleep(delay_seconds)
+        return (None, [])
 
     # ---------- Profiles ----------
     def get_profiles(self) -> list[tuple[str, str, str]]:
         """Returns list of (linkedin_profile, name, initially_scraped). Header row excluded."""
-        ws = self._sheet(SHEET_PROFILES)
-        rows = ws.get_all_values()
+        _, rows = self._get_all_values_from_sheet(SHEET_PROFILES)
         if not rows or rows[0] != PROFILES_HEADERS:
             return []
         out = []
@@ -138,11 +202,13 @@ class SheetsService:
             return False
         if self.profile_exists(url_or_slug):
             return False
-        ws = self._sheet(SHEET_PROFILES)
+        
         profile_display = url_or_slug.strip()
         if not profile_display.lower().startswith("http"):
             profile_display = f"https://www.linkedin.com/in/{normalized}"
-        ws.append_row([(name or "").strip(), profile_display, INITIALLY_SCRAPED_NO])
+        self._run_ws_write_with_retry(
+            lambda: self._sheet(SHEET_PROFILES).append_row([(name or "").strip(), profile_display, INITIALLY_SCRAPED_NO])
+        )
         return True
 
     def get_profile_name(self, url_or_slug: str) -> str | None:
@@ -174,30 +240,58 @@ class SheetsService:
         key = _normalize_profile_url(url_or_slug)
         if not key:
             return False
-        ws = self._sheet(SHEET_PROFILES)
-        rows = ws.get_all_values()
+        ws, rows = self._get_all_values_from_sheet(SHEET_PROFILES)
         if not rows or rows[0] != PROFILES_HEADERS:
             return False
         for i in range(1, len(rows)):
             if _normalize_profile_url(rows[i][1] if len(rows[i]) > 1 else "") == key:
-                ws.delete_rows(i + 1)
+                # Batch delete the single row with retry
+                sheet_id = ws.id
+                requests = [
+                    {
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": i,  # zero-based
+                                "endIndex": i + 1,
+                            }
+                        }
+                    }
+                ]
+                self._batch_update_with_retry(requests)
                 return True
         return False
 
     def _delete_rows_where_follower_url_matches(self, sheet_name: str, profile_url_normalized: str, follower_cell_col: int = 2) -> int:
         """Delete all data rows where the follower cell (1-based) contains a URL that normalizes to profile_url_normalized. Parses HYPERLINK formulas. Returns count deleted."""
-        ws = self._sheet(sheet_name)
-        rows = ws.get_all_values(value_render_option='FORMULA')
-        if not rows or len(rows) < 2:
+        ws, rows = self._get_all_values_from_sheet(sheet_name, value_render_option="FORMULA")
+        if not rows or len(rows) < 2 or ws is None:
             return 0
-        to_delete = []
+        to_delete: list[int] = []
         for i in range(1, len(rows)):
             cell_val = rows[i][follower_cell_col - 1] if len(rows[i]) >= follower_cell_col else ""
             url = _parse_hyperlink_cell(cell_val)[0]
             if _normalize_profile_url(url) == profile_url_normalized:
                 to_delete.append(i + 1)
-        for row_index in sorted(to_delete, reverse=True):
-            ws.delete_rows(row_index)
+        if not to_delete:
+            return 0
+        # Batch delete with retry: one API call for all rows (descending order)
+        sheet_id = ws.id
+        requests = [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": r - 1,
+                        "endIndex": r,
+                    }
+                }
+            }
+            for r in sorted(to_delete, reverse=True)
+        ]
+        self._batch_update_with_retry(requests)
         return len(to_delete)
 
     def _resolve_to_profile_url(self, identifier: str) -> str | None:
@@ -229,18 +323,21 @@ class SheetsService:
         key = _normalize_profile_url(url_or_slug)
         if not key:
             return
-        ws = self._sheet(SHEET_PROFILES)
-        rows = ws.get_all_values()
+        ws, rows = self._get_all_values_from_sheet(SHEET_PROFILES)
+        if ws is None:
+            return
         for i in range(1, len(rows)):
             if _normalize_profile_url(rows[i][1] if len(rows[i]) > 1 else "") == key:
-                ws.update_cell(i + 1, 3, INITIALLY_SCRAPED_YES)
+                row_num, col_num = i + 1, 3
+                self._run_ws_write_with_retry(
+                    lambda r=row_num, c=col_num: self._sheet(SHEET_PROFILES).update_cell(r, c, INITIALLY_SCRAPED_YES)
+                )
                 return
 
     # ---------- Overall list (efficient lookup) ----------
     def get_overall_records(self) -> list[dict]:
         """Returns list of dicts: Company Name, Company URL, Follower Name, Follower URL, Initial Scrape Date, Date Followed. Parses HYPERLINK formulas in cells."""
-        ws = self._sheet(SHEET_OVERALL)
-        rows = ws.get_all_values(value_render_option='FORMULA')
+        _, rows = self._get_all_values_from_sheet(SHEET_OVERALL, value_render_option="FORMULA")
         if not rows or (rows[0][:4] if len(rows[0]) >= 4 else rows[0]) != OVERALL_HEADERS[:4]:
             return []
         out = []
@@ -302,7 +399,6 @@ class SheetsService:
         """
         if not records:
             return
-        ws = self._sheet(SHEET_OVERALL)
         values: list[list[str]] = []
         for (
             company_name,
@@ -315,18 +411,55 @@ class SheetsService:
             company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
             follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
             values.append([company_cell, follower_cell, initial_scrape_date, date_followed])
-        # Use append_rows to minimize per-row API calls.
-        ws.append_rows(values, value_input_option="USER_ENTERED")
+        self._run_ws_write_with_retry(
+            lambda: self._sheet(SHEET_OVERALL).append_rows(values, value_input_option="USER_ENTERED")
+        )
 
     def remove_from_overall_by_row_index(self, one_based_row: int) -> None:
         """Remove a single row from Overall sheet (1-based row number)."""
-        self._sheet(SHEET_OVERALL).delete_rows(one_based_row)
+        self.remove_from_overall_by_row_indices([one_based_row])
+
+    def remove_from_overall_by_row_indices(self, one_based_rows: list[int]) -> None:
+        """Remove multiple rows from Overall sheet (1-based row numbers) in a single batch update.
+
+        Header row (1) is never deleted.
+        """
+        if not one_based_rows:
+            return
+        # Normalize: unique, sorted descending, skip header row
+        unique_rows = sorted({r for r in one_based_rows if r and r > 1}, reverse=True)
+        if not unique_rows:
+            return
+        sheet_id = None
+        for _ in range(12):
+            try:
+                ws = self._sheet(SHEET_OVERALL)
+                sheet_id = ws.id
+                break
+            except Exception:
+                time.sleep(10.0)
+        if sheet_id is None:
+            return
+        requests: list[dict] = []
+        for r in unique_rows:
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": r - 1,
+                            "endIndex": r,
+                        }
+                    }
+                }
+            )
+        self._batch_update_with_retry(requests)
 
     def find_overall_row_index(self, company_name: str, follower_url: str) -> int | None:
         """Returns 1-based row index in Overall sheet, or None. Matches by company name and normalized Follower URL. Parses HYPERLINK cells."""
         key = _row_key_by_url(company_name, follower_url)
-        ws = self._sheet(SHEET_OVERALL)
-        rows = ws.get_all_values()
+        _, rows = self._get_all_values_from_sheet(SHEET_OVERALL)
         for i in range(1, len(rows)):
             if len(rows[i]) < 2:
                 continue
@@ -358,13 +491,14 @@ class SheetsService:
         """
         if not records:
             return
-        ws = self._sheet(SHEET_NEW_FOLLOWS)
         values: list[list[str]] = []
         for company_name, company_url, follower_name, follower_url, date_followed in records:
             company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
             follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
             values.append([company_cell, follower_cell, date_followed])
-        ws.append_rows(values, value_input_option="USER_ENTERED")
+        self._run_ws_write_with_retry(
+            lambda: self._sheet(SHEET_NEW_FOLLOWS).append_rows(values, value_input_option="USER_ENTERED")
+        )
 
     # ---------- New Unfollows ----------
     def append_new_unfollow(
@@ -402,7 +536,6 @@ class SheetsService:
         """
         if not records:
             return
-        ws = self._sheet(SHEET_NEW_UNFOLLOWS)
         values: list[list[str]] = []
         for (
             company_name,
@@ -416,4 +549,6 @@ class SheetsService:
             company_cell = _hyperlink_formula(company_url, company_name) if company_url else company_name
             follower_cell = _hyperlink_formula(follower_url, follower_name) if follower_url else follower_name
             values.append([company_cell, follower_cell, initial_scrape_date, date_followed, unfollowed_date])
-        ws.append_rows(values, value_input_option="USER_ENTERED")
+        self._run_ws_write_with_retry(
+            lambda: self._sheet(SHEET_NEW_UNFOLLOWS).append_rows(values, value_input_option="USER_ENTERED")
+        )

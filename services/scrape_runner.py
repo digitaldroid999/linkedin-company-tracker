@@ -54,6 +54,7 @@ def excel_serial_to_date(serial_number):
 def run_scrape(
     on_status: Callable[[str], None] | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[int, int, int, list[dict], list[dict]]:
     """
     Scrapes all profiles from Sheets, updates Overall/New Follows/New Unfollows.
@@ -68,6 +69,8 @@ def run_scrape(
     profiles_processed = 0
 
     for profile_display, follower_name, initially_scraped in profiles:
+        if should_stop and should_stop():
+            break
         normalized = _get_username_from_profile_url(profile_display)
         if not normalized:
             continue
@@ -161,9 +164,9 @@ def run_scrape(
             if new_unfollows_batch:
                 sheets.append_new_unfollows_batch(new_unfollows_batch)
 
-            # Remove unfollowed rows from overall (from bottom to top to preserve indices)
-            for row_index in sorted(rows_to_remove, reverse=True):
-                sheets.remove_from_overall_by_row_index(row_index)
+            # Remove unfollowed rows from overall in a single batched request
+            if rows_to_remove:
+                sheets.remove_from_overall_by_row_indices(rows_to_remove)
 
         if on_progress:
             on_progress(display_name, len(new_follows_list), len(new_unfollows_list))
