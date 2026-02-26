@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import sys
 from datetime import datetime
+from typing import Callable
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -35,9 +36,13 @@ from services.scrape_runner import run_scrape
 from services.scheduler import ScrapeScheduler
 from services.email_service import send_summary_email
 from services.linkedin_scraper import LinkedInAPIError
+from services.logging_service import get_logger, install_global_exception_hook
 
 
 DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+logger = get_logger()
+install_global_exception_hook()
 
 # Path to checkmark SVG for checkbox indicator
 _CHECKMARK_SVG = get_base_path() / "assets" / "checkmark.svg"
@@ -227,10 +232,12 @@ class ScrapeWorker(QThread):
             result = run_scrape(on_status=on_status, on_progress=on_progress, should_stop=self._should_stop)
             self.finished_with_result.emit(*result)
         except LinkedInAPIError as e:
+            logger.error("LinkedInAPIError in ScrapeWorker: %s", e)
             self.finished_with_result.emit(0, 0, 0, [], [])
             self.status.emit(str(e))
             self.api_error.emit(str(e))
         except Exception as e:
+            logger.exception("Unexpected error in ScrapeWorker")
             self.finished_with_result.emit(0, 0, 0, [], [])
             self.status.emit(f"Error: {e}")
 
@@ -480,6 +487,7 @@ class MainWindow(QMainWindow):
             n = self._sheets.get_profile_count()
             self._profile_count_label.setText(f"Profiles in tracking: {n}")
         except Exception as e:
+            logger.exception("Error refreshing profile count")
             self._profile_count_label.setText("Profiles: (error loading)")
 
     def _copy_sheets_link(self):
@@ -619,6 +627,7 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Add profile", "This profile is already in the list.")
         except Exception as e:
+            logger.exception("Failed to add profile")
             QMessageBox.critical(self, "Add profile", f"Failed to add profile: {e}")
         finally:
             self._manage_busy = False
@@ -684,6 +693,7 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Remove profile", "This profile is not in the list.")
         except Exception as e:
+            logger.exception("Failed to remove profile")
             QMessageBox.critical(self, "Remove profile", f"Failed to remove: {e}")
         finally:
             self._manage_busy = False
@@ -745,6 +755,7 @@ class MainWindow(QMainWindow):
         if self._running:
             return
         self._set_running(True)
+        logger.info("User triggered manual scrape run")
         self._status_bar.showMessage("Scraping…")
         self._worker = ScrapeWorker(should_stop=self._should_stop)
         self._worker.status.connect(self._on_worker_status)
@@ -780,6 +791,12 @@ class MainWindow(QMainWindow):
 
     def _on_worker_finished(self, profiles_processed: int, new_follows: int, new_unfollows: int,
                             new_follows_list: list, new_unfollows_list: list):
+        logger.info(
+            "Scrape worker finished. profiles_processed=%d, new_follows=%d, new_unfollows=%d",
+            profiles_processed,
+            new_follows,
+            new_unfollows,
+        )
         self._set_running(False)
         self._refresh_profile_count()
         self._update_next_run_status()

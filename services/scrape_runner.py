@@ -8,6 +8,7 @@ from typing import Callable
 from config.constants import LINKEDIN_PROFILE_BASE
 from services.sheets_service import SheetsService
 from services.linkedin_scraper import get_followed_companies
+from services.logging_service import get_logger
 
 
 def _get_username_from_profile_url(url_or_slug: str) -> str:
@@ -61,8 +62,10 @@ def run_scrape(
     on_status(message), on_progress(current_profile, new_follows_count, new_unfollows_count).
     Returns: (profiles_processed, new_follows_count, new_unfollows_count, new_follows_list, new_unfollows_list).
     """
+    logger = get_logger()
     sheets = SheetsService()
     profiles = sheets.get_profiles()
+    logger.info("Scrape run started. Profiles to process: %d", len(profiles))
     today = _format_date(datetime.now())
     new_follows_list: list[dict] = []
     new_unfollows_list: list[dict] = []
@@ -70,6 +73,7 @@ def run_scrape(
 
     for profile_display, follower_name, initially_scraped in profiles:
         if should_stop and should_stop():
+            logger.info("Scrape run stop requested. Processed so far: %d", profiles_processed)
             break
         normalized = _get_username_from_profile_url(profile_display)
         if not normalized:
@@ -81,11 +85,12 @@ def run_scrape(
         try:
             companies = get_followed_companies(profile_display)
         except Exception as e:
-            print(f"Error processing {display_name}: {e}")
+            logger.exception("Error processing %s", display_name)
             if on_status:
                 on_status(f"{display_name} (error: {e})")
             continue
         profiles_processed += 1
+        logger.info("Completed scraping profile %d/%d: %s", profiles_processed, len(profiles), display_name)
 
         is_initial = initially_scraped.strip().lower() != "yes"
 
@@ -171,4 +176,10 @@ def run_scrape(
         if on_progress:
             on_progress(display_name, len(new_follows_list), len(new_unfollows_list))
 
+    logger.info(
+        "Scrape run finished. Profiles processed=%d, new_follows=%d, new_unfollows=%d",
+        profiles_processed,
+        len(new_follows_list),
+        len(new_unfollows_list),
+    )
     return profiles_processed, len(new_follows_list), len(new_unfollows_list), new_follows_list, new_unfollows_list

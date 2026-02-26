@@ -6,6 +6,7 @@ import time
 import requests
 
 from config.credentials import RAPIDAPI_KEY, RAPIDAPI_HOST
+from services.logging_service import get_logger
 
 URL = "https://professional-network-data.p.rapidapi.com/profiles/interests/companies"
 HEADERS = {
@@ -39,6 +40,7 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
     Returns list of dicts: {"name": str, "url": str} for each followed company.
     Uses RapidAPI professional-network-data profiles/interests/companies.
     """
+    logger = get_logger()
     username = _get_username_from_profile_url(profile_url_or_slug)
     if not username:
         return []
@@ -49,31 +51,72 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
 
     while page <= total_pages:
         payload = {"username": username, "page": page}
-        try:
-            response = requests.post(URL, json=payload, headers=HEADERS, timeout=30)
-            if response.status_code == 429:
-                for attempt in range(12):
-                    time.sleep(10)
-                    response = requests.post(URL, json=payload, headers=HEADERS, timeout=30)
-                    if response.status_code != 429:
+        data = None
+        max_retries = 15
+        for attempt in range(max_retries):
+            try:
+                for _ in range(12):
+                    try:
+                        response = requests.post(URL, json=payload, headers=HEADERS, timeout=10)
                         break
+                    except Exception:
+                        pass
                 if response.status_code == 429:
-                    raise LinkedInAPIError(
-                        "Rate limit exceeded (429) after 12 retries. " + API_ERROR_MESSAGE
+                    # Rate limit: retry with backoff
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            "Rate limit (429) for username=%s page=%d after %d attempts",
+                            username,
+                            page,
+                            max_retries,
+                        )
+                        raise LinkedInAPIError(
+                            "Rate limit exceeded (429) after retries. " + API_ERROR_MESSAGE
+                        )
+                    logger.warning(
+                        "Rate limit (429) for username=%s page=%d. Retrying in 10 seconds... (Attempt %d/%d)",
+                        username,
+                        page,
+                        attempt + 1,
+                        max_retries,
                     )
-            response.raise_for_status()
-            data = response.json()
-        except LinkedInAPIError:
-            raise
-        except requests.RequestException as e:
-            if page == 1:
-                raise LinkedInAPIError(API_ERROR_MESSAGE) from e
+                    time.sleep(10)
+                    continue
+                # Non-429: check for other HTTP errors
+                response.raise_for_status()
+                data = response.json()
+                break
+            except LinkedInAPIError:
+                # Propagate LinkedInAPIError directly
+                raise
+            except (requests.RequestException, ValueError) as e:
+                # Timeouts, connection errors, JSON errors, etc.
+                if attempt == max_retries - 1:
+                    logger.error(
+                        "Request failed for username=%s page=%d after %d attempts: %s",
+                        username,
+                        page,
+                        max_retries,
+                        e,
+                    )
+                    if page == 1:
+                        # Surface error to caller for first page
+                        raise LinkedInAPIError(API_ERROR_MESSAGE) from e
+                    # For subsequent pages, stop pagination gracefully
+                    data = None
+                    break
+                logger.warning(
+                    "Request attempt %d failed for username=%s page=%d: %s. Retrying in 10 seconds...",
+                    attempt + 1,
+                    username,
+                    page,
+                    e,
+                )
+                time.sleep(10)
+        if data is None:
+            # Either all retries failed or caller decided to stop pagination
             break
-        except ValueError as e:
-            if page == 1:
-                raise LinkedInAPIError(API_ERROR_MESSAGE) from e
-            break
-        
+
         if not data.get("success"):
             if page == 1:
                 return []
@@ -95,3 +138,4 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
         page += 1
 
     return results
+        

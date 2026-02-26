@@ -21,6 +21,10 @@ from config.constants import (
     INITIALLY_SCRAPED_NO,
     INITIALLY_SCRAPED_YES,
 )
+from services.logging_service import get_logger
+
+
+logger = get_logger()
 
 
 def _parse_hyperlink_cell(cell_value: str) -> tuple[str, str]:
@@ -119,12 +123,16 @@ class SheetsService:
         """
         if not requests:
             return
+        last_error: Exception | None = None
         for _ in range(max_retries):
             try:
                 self._spreadsheet.batch_update({"requests": requests})
                 return
-            except Exception:
+            except Exception as e:
+                last_error = e
+                logger.exception("batch_update failed; will retry", exc_info=e)
                 time.sleep(delay_seconds)
+        logger.error("batch_update failed after %d retries: %s", max_retries, last_error)
 
     def _run_ws_write_with_retry(
         self,
@@ -134,14 +142,18 @@ class SheetsService:
         delay_seconds: float = 10.0,
     ) -> None:
         """Run a worksheet write operation (append_row, append_rows, update_cell, etc.) with retry."""
+        last_error: Exception | None = None
         for _ in range(max_retries):
             try:
                 operation()
                 return
-            except Exception:
+            except Exception as e:
+                last_error = e
+                logger.exception("Worksheet write operation failed; will retry", exc_info=e)
                 time.sleep(delay_seconds)
         # After exhausting retries, raise so caller can handle or we fail visibly
-        raise RuntimeError("Worksheet write failed after retries")
+        logger.error("Worksheet write failed after %d retries: %s", max_retries, last_error)
+        raise RuntimeError("Worksheet write failed after retries") from last_error
 
     def _get_all_values_from_sheet(
         self,
@@ -154,6 +166,7 @@ class SheetsService:
 
         Returns (worksheet_or_none, rows). On success rows is non-empty; on failure (None, []).
         """
+        last_error: Exception | None = None
         for _ in range(max_retries):
             try:
                 ws = self._sheet(sheet_name)
@@ -163,9 +176,21 @@ class SheetsService:
                     rows = ws.get_all_values(value_render_option=value_render_option)
                 if rows:
                     return (ws, rows)
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = e
+                logger.exception(
+                    "Error reading values from sheet '%s'; will retry",
+                    sheet_name,
+                    exc_info=e,
+                )
             time.sleep(delay_seconds)
+        if last_error is not None:
+            logger.error(
+                "Giving up reading values from sheet '%s' after %d retries: %s",
+                sheet_name,
+                max_retries,
+                last_error,
+            )
         return (None, [])
 
     # ---------- Profiles ----------
@@ -431,14 +456,21 @@ class SheetsService:
         if not unique_rows:
             return
         sheet_id = None
+        last_error: Exception | None = None
         for _ in range(12):
             try:
                 ws = self._sheet(SHEET_OVERALL)
                 sheet_id = ws.id
                 break
-            except Exception:
+            except Exception as e:
+                last_error = e
+                logger.exception("Failed to get sheet id for SHEET_OVERALL; will retry", exc_info=e)
                 time.sleep(10.0)
         if sheet_id is None:
+            logger.error(
+                "Giving up removing rows from Overall sheet after retries; last error: %s",
+                last_error,
+            )
             return
         requests: list[dict] = []
         for r in unique_rows:

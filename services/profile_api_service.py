@@ -6,6 +6,7 @@ import requests
 import time
 
 from config.credentials import RAPIDAPI_KEY, RAPIDAPI_HOST
+from services.logging_service import get_logger
 
 URL = "https://professional-network-data.p.rapidapi.com/get-profile-data-by-url"
 HEADERS = {
@@ -65,6 +66,7 @@ def get_profile_name(profile_url_or_slug: str) -> str | None:
     Fetch profile data by URL and return the display name, or None on failure.
     Uses RapidAPI professional-network-data get-profile-data-by-url.
     """
+    logger = get_logger()
     url = _normalize_profile_url(profile_url_or_slug)
     if not url or "/in/" not in url:
         return None
@@ -81,9 +83,14 @@ def get_profile_name(profile_url_or_slug: str) -> str | None:
             # Check for 429 status code
             if response.status_code == 429:
                 if attempt == max_retries - 1:  # Last attempt
-                    print(f"Rate limit exceeded after {max_retries} attempts")
+                    logger.error("RapidAPI 429 rate limit for %s after %d attempts", url, max_retries)
                     return None
-                print(f"Rate limit hit (429). Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                logger.warning(
+                    "RapidAPI 429 rate limit for %s. Retrying in 10 seconds... (Attempt %d/%d)",
+                    url,
+                    attempt + 1,
+                    max_retries,
+                )
                 time.sleep(10)
                 continue  # Retry the request
                 
@@ -93,9 +100,14 @@ def get_profile_name(profile_url_or_slug: str) -> str | None:
             
         except (requests.RequestException, ValueError) as e:
             if attempt == max_retries - 1:  # Last attempt
-                print(f"Failed after {max_retries} attempts: {e}")
+                logger.error("Failed to fetch profile name for %s after %d attempts: %s", url, max_retries, e)
                 return None
-            print(f"Attempt {attempt + 1} failed: {e}. Retrying in 10 seconds...")
+            logger.warning(
+                "Attempt %d to fetch profile name for %s failed: %s. Retrying in 10 seconds...",
+                attempt + 1,
+                url,
+                e,
+            )
             time.sleep(10)
             continue
 

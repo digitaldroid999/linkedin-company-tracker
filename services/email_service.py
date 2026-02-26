@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from config.constants import SUMMARY_EMAIL, SHEETS_LINK
+from services.logging_service import get_logger
 
 def build_summary_html(
     profiles_processed: int,
@@ -89,6 +90,7 @@ def send_summary_email(
     msg["From"] = sender_email
     msg["To"] = SUMMARY_EMAIL
     msg.attach(MIMEText(html, "html"))
+    logger = get_logger()
     try:
         server = smtplib.SMTP(smtp_server or "smtp.gmail.com", smtp_port or 587)
         server.ehlo()
@@ -100,4 +102,5 @@ def send_summary_email(
         server.quit()
         return True, "Summary email sent."
     except Exception as e:
+        logger.exception("Failed to send summary email")
         return False, str(e)
