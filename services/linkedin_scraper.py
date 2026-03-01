@@ -55,12 +55,7 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
         max_retries = 15
         for attempt in range(max_retries):
             try:
-                for _ in range(12):
-                    try:
-                        response = requests.post(URL, json=payload, headers=HEADERS, timeout=10)
-                        break
-                    except Exception:
-                        pass
+                response = requests.post(URL, json=payload, headers=HEADERS, timeout=10)
                 if response.status_code == 429:
                     # Rate limit: retry with backoff
                     if attempt == max_retries - 1:
@@ -85,6 +80,24 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
                 # Non-429: check for other HTTP errors
                 response.raise_for_status()
                 data = response.json()
+                if data is None:
+                    # Either all retries failed or caller decided to stop pagination
+                    logger.warning(
+                        "Date is None for username=%s page=%d. Retrying in 10 seconds...",
+                        username,
+                        page,
+                    )
+                    time.sleep(10)
+                    continue
+
+                if not data.get("success"):
+                    logger.warning(
+                        "Success flag is false for username=%s page=%d. Retrying in 10 seconds...",
+                        username,
+                        page,
+                    )
+                    time.sleep(10)
+                    continue
                 break
             except LinkedInAPIError:
                 # Propagate LinkedInAPIError directly
@@ -115,12 +128,23 @@ def get_followed_companies(profile_url_or_slug: str) -> list[dict]:
                 time.sleep(10)
         if data is None:
             # Either all retries failed or caller decided to stop pagination
-            break
+            logger.warning(
+                "Date is None for username=%s page=%d after %d attempts",
+                username,
+                page,
+                max_retries,
+            )
+            page += 1
+            continue
 
         if not data.get("success"):
-            if page == 1:
-                return []
-            break
+            logger.warning(
+                "Success flag is false for username=%s page=%d",
+                username,
+                page,
+            )
+            page += 1
+            continue
 
         body = data.get("data") or {}
         items = body.get("items") or []

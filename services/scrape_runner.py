@@ -20,6 +20,15 @@ def _get_username_from_profile_url(url_or_slug: str) -> str:
             s = s.split("/in/")[-1].split("/")[0].split("?")[0]
     return s
 
+def _normalize_company_url(url_or_slug: str) -> str:
+    s = (url_or_slug or "").strip().lower()
+    if not s:
+        return ""
+    if s.startswith("http"):
+        if "/company/" in s:
+            s = s.split("/company/")[-1].split("/")[0].split("?")[0]
+    return s
+
 def _format_date(d: datetime | None) -> str:
     if d is None:
         d = datetime.now()
@@ -90,7 +99,8 @@ def run_scrape(
                 on_status(f"{display_name} (error: {e})")
             continue
         profiles_processed += 1
-        logger.info("Completed scraping profile %d/%d: %s", profiles_processed, len(profiles), display_name)
+        logger.info("Completed scraping profile %d/%d: %s. Found %d companies.", profiles_processed, len(profiles), display_name, len(companies))
+
 
         is_initial = initially_scraped.strip().lower() != "yes"
 
@@ -111,9 +121,13 @@ def run_scrape(
             follower_key = _get_username_from_profile_url(follower_url)
             current_set: set[tuple[str, str]] = set()
             for c in companies:
-                name = (c.get("name") or c.get("url", "")).strip()
-                if name:
-                    current_set.add((name.lower(), follower_key))
+                company_key = _normalize_company_url(c.get("url", ""))
+                if company_key:
+                    current_set.add((company_key.lower(), follower_key))
+                else:
+                    logger.info("company_key is empty for company: %s", c)
+
+            logger.info("Overall Records: %d. Overall set: %d. Current set: %d", len(overall_records), len(overall_set), len(current_set))
 
             # New follows: in current but not in overall — batch write once per profile
             new_overall_batch: list[tuple[str, str, str, str, str, str]] = []
@@ -121,7 +135,7 @@ def run_scrape(
             for c in companies:
                 company_name = (c.get("name") or c.get("url", "")).strip()
                 company_url = (c.get("url") or "").strip()
-                key = (company_name.lower(), follower_key)
+                key = (_normalize_company_url(company_url).lower(), follower_key)
                 if key not in overall_set:
                     new_overall_batch.append(
                         (company_name, company_url, display_name, follower_url, "", today)
@@ -148,7 +162,7 @@ def run_scrape(
                 rec_follower_key = _get_username_from_profile_url(rec.get("Follower URL", ""))
                 if rec_follower_key != follower_key:
                     continue
-                comp_key = (rec["Company Name"].strip().lower(), follower_key)
+                comp_key = (_normalize_company_url(rec["Company URL"]).lower(), follower_key)
                 if comp_key not in current_set:
                     new_unfollows_batch.append(
                         (

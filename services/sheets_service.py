@@ -76,15 +76,19 @@ def _normalize_profile_url(url_or_slug: str) -> str:
             s = s.split("/in/")[-1].split("/")[0].split("?")[0]
     return s
 
+def _normalize_company_url(url_or_slug: str) -> str:
+    s = (url_or_slug or "").strip().lower()
+    if not s:
+        return ""
+    if s.startswith("http"):
+        if "/company/" in s:
+            s = s.split("/company/")[-1].split("/")[0].split("?")[0]
+    return s
 
-def _row_key(company: str, follower: str) -> tuple[str, str]:
-    """Canonical key for (company, follower display name) to avoid duplicates."""
-    return ((company or "").strip().lower(), (follower or "").strip().lower())
 
-
-def _row_key_by_url(company: str, follower_url: str) -> tuple[str, str]:
+def _row_key_by_url(company_url: str, follower_url: str) -> tuple[str, str]:
     """Canonical key using company name and normalized follower profile URL."""
-    return ((company or "").strip().lower(), _normalize_profile_url(follower_url or ""))
+    return (_normalize_company_url(company_url or ""), _normalize_profile_url(follower_url or ""))
 
 
 def _hyperlink_formula(url: str, label: str) -> str:
@@ -389,7 +393,7 @@ class SheetsService:
     def get_overall_set(self) -> set[tuple[str, str]]:
         """Set of (company_name, normalized_follower_url) for fast membership check."""
         records = self.get_overall_records()
-        return records, {_row_key_by_url(r["Company Name"], r.get("Follower URL", "")) for r in records}
+        return records, {_row_key_by_url(r.get("Company URL", ""), r.get("Follower URL", "")) for r in records}
 
     def append_overall(
         self,
@@ -487,17 +491,6 @@ class SheetsService:
                 }
             )
         self._batch_update_with_retry(requests)
-
-    def find_overall_row_index(self, company_name: str, follower_url: str) -> int | None:
-        """Returns 1-based row index in Overall sheet, or None. Matches by company name and normalized Follower URL. Parses HYPERLINK cells."""
-        key = _row_key_by_url(company_name, follower_url)
-        _, rows = self._get_all_values_from_sheet(SHEET_OVERALL)
-        for i in range(1, len(rows)):
-            if len(rows[i]) < 2:
-                continue
-            if _row_key_by_url(rows[i][0], rows[i][1]) == key:
-                return i + 1
-        return None
 
     # ---------- New Follows ----------
     def append_new_follow(
